@@ -1,0 +1,17 @@
+| Methode            | Effekt                                                      | Zweck                                        |
+| ------------------ | ----------------------------------------------------------- | -------------------------------------------- |
+| `aug_add_noise`    | Leichtes Rauschen hinzufügen                                | Robustheit gg. Rauschvariation               |
+| `aug_time_shift`   | Signal zeitlich verschieben (mit Padding, kein Wrap-Around) | Positionsinvarianz                           |
+| `aug_gain`         | Amplitude zufällig skalieren (±10 %)                        | Simulation unterschiedlicher Nadelpositionen |
+| `aug_time_stretch` | Leichte Dehnung/Stauchung (±5 %)                            | Variation von Aktivitätsdauer                |
+| `aug_time_mask`    | Kurze Abschnitte auf 0 setzen                               | Robustheit gg. Aussetzer                     |
+
+
+
+| Effekt                               | Empfehlung                                               |
+| ------------------------------------ | -------------------------------------------------------- |
+| **Mehr Varianz (robusteres Modell)** | `aug_per_segment=2–3` erhöhen                            |
+| **Etwas stärkeres Rauschen**         | `noise_std=(0.005,0.02)`                                 |
+| **Mehr Zeitvariabilität**            | `stretch_range=(0.9,1.1)`                                |
+| **Mehr Robustheit gg. Dropouts**     | `mask_frac_range=(0.05,0.2)`                             |
+| **Minimalistische Variante**         | `augment=False` → nur Rohdaten ohne künstliche Variation |
