@@ -2,3 +2,8 @@
 *.pdf
 *.png
 *.pyc
+venv/
+*.npz
+
+
+

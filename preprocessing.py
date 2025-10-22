@@ -52,8 +52,8 @@ except Exception:
 # ----------------------------
 @dataclass
 class Config:
-    input_dir: str
-    output_dir: str
+    input_dir: "Dataset"
+    output_dir: "preprocess"
     target_sr: int = 11025
     window_sec: float = 2.0
     hop_sec: float = 0.5
@@ -86,6 +86,7 @@ class Config:
     # Folder names
     normal_name: str = "Normal"
     abnormal_name: str = "Spontanaktivität"
+    mixed: str = "Mixed"
 
     def output_file(self) -> str:
         os.makedirs(self.output_dir, exist_ok=True)
@@ -138,7 +139,7 @@ def _apply_notch50(y: np.ndarray, sr: int, f0: float, q: float) -> np.ndarray:
     b, a = iirnotch(f0 / (sr / 2.0), Q=q)
     return filtfilt(b, a, y).astype(np.float32)
 
-
+##sliding window Verfahren
 def segment_signal(y: np.ndarray, sr: int, win_sec: float, hop_sec: float) -> np.ndarray:
     win_len = int(round(win_sec * sr))
     hop_len = int(round(hop_sec * sr))
@@ -177,15 +178,29 @@ def aug_gain(seg: np.ndarray, low: float, high: float) -> np.ndarray:
 
 
 def aug_time_stretch(seg: np.ndarray, rate: float) -> np.ndarray:
-    if librosa is None or abs(rate - 1.0) < 1e-3:
-        return seg
-    stretched = librosa.effects.time_stretch(seg, rate)
-    if len(stretched) > len(seg):
+    """Zeitstreckung kompatibel mit Librosa ≥0.10 und älteren Versionen."""
+    import numpy as np
+    try:
+        # Neue API (librosa >=0.10): erwartet STFT-Input
+        D = librosa.stft(seg)
+        D_stretch = librosa.effects.time_stretch(D, rate)
+        stretched = librosa.istft(D_stretch).astype(np.float32)
+    except Exception:
+        # Fallback für ältere librosa-Versionen
+        stretched = librosa.effects.time_stretch(seg, rate).astype(np.float32)
+
+    # Länge anpassen auf Original
+    if len(stretched) == len(seg):
+        return stretched
+    elif len(stretched) > len(seg):
         start = (len(stretched) - len(seg)) // 2
-        return stretched[start:start + len(seg)].astype(np.float32)
+        return stretched[start:start+len(seg)]
     else:
         pad = len(seg) - len(stretched)
-        return np.pad(stretched, (pad // 2, pad - pad // 2), mode='constant').astype(np.float32)
+        left = pad // 2
+        right = pad - left
+        return np.pad(stretched, (left, right), mode="constant")
+
 
 
 def aug_time_mask(seg: np.ndarray, low_frac: float, high_frac: float) -> np.ndarray:
@@ -207,9 +222,9 @@ def apply_augmentations(seg: np.ndarray, sr: int, cfg: Config) -> np.ndarray:
         ops.append(lambda x: aug_time_shift(x, sr, cfg.max_shift_sec))
     if np.random.rand() < cfg.p_gain:
         ops.append(lambda x: aug_gain(x, *cfg.gain_range))
-    if np.random.rand() < cfg.p_stretch:
-        rate = np.random.uniform(*cfg.stretch_range)
-        ops.append(lambda x: aug_time_stretch(x, rate))
+    # if np.random.rand() < cfg.p_stretch:
+    #     rate = np.random.uniform(*cfg.stretch_range)
+    #     ops.append(lambda x: aug_time_stretch(x, rate))
     if np.random.rand() < cfg.p_mask:
         ops.append(lambda x: aug_time_mask(x, *cfg.mask_frac_range))
 
