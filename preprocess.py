@@ -5,11 +5,11 @@
 # - Normalisierung via cfg.normalization: 'per_segment' | 'per_file' | 'none'
 # - Läuft ohne CLI: Config unten anpassen und ausführen.
 
-import os, re, json, random, math
-from dataclasses import dataclass, asdict
-from typing import Tuple, List, Dict
 import numpy as np
 from scipy.io import wavfile
+import os, re, json, random, math
+from typing import Tuple, List, Dict
+from dataclasses import dataclass, asdict
 from scipy.signal import butter, filtfilt, iirnotch, resample_poly
 
 # ----------------------------
@@ -25,8 +25,8 @@ class Config:
 
     # Segmentierung
     target_sr: int = 11025
-    window_sec: float = 2.0
-    hop_sec: float = 0.5
+    window_sec: float = 1.0
+    hop_sec: float = 1
 
     # Normalisierung: 'per_segment' | 'per_file' | 'none'
     normalization: str = "per_segment"
@@ -76,25 +76,26 @@ cfg = Config()
 # ----------------------------
 
 def _read_wav(path: str, target_sr: int) -> np.ndarray:
-    sr, x = wavfile.read(path)
+    samplerate, data = wavfile.read(path)
+    ic(data.shape[0]/samplerate, data.shape, data.dtype, samplerate, target_sr)
     # auf float [-1,1]
-    if x.dtype == np.int16:
-        x = x.astype(np.float32) / 32768.0
-    elif x.dtype == np.int32:
-        x = x.astype(np.float32) / 2147483648.0
-    elif x.dtype == np.uint8:
-        x = (x.astype(np.float32) - 128.0) / 128.0
+    if data.dtype == np.int16:
+        data = data.astype(np.float32) / 32768.0
+    elif data.dtype == np.int32:
+        data = data.astype(np.float32) / 2147483648.0
+    elif data.dtype == np.uint8:
+        data = (data.astype(np.float32) - 128.0) / 128.0
     else:
-        x = x.astype(np.float32)
+        data = data.astype(np.float32)
+    
+    if data.ndim > 1:
+        data = data.mean(axis=1).astype(np.float32)
 
-    if x.ndim > 1:
-        x = x.mean(axis=1).astype(np.float32)
-
-    if sr != target_sr:
-        g = math.gcd(sr, target_sr)
-        up, down = target_sr // g, sr // g
-        x = resample_poly(x, up, down).astype(np.float32)
-    return x
+    if samplerate != target_sr:
+        g = math.gcd(samplerate, target_sr)
+        up, down = target_sr // g, samplerate // g
+        data = resample_poly(data, up, down).astype(np.float32)
+    return data
 
 def _butter_bandpass(sig: np.ndarray, sr: int, lo: float, hi: float, order: int) -> np.ndarray:
     ny = 0.5 * sr
@@ -135,13 +136,34 @@ def patient_id_from_path(path: str, folder_kind: str) -> str:
         return parts[-2]
     return parts[0]
 
-def segment_signal(x: np.ndarray, sr: int, win_sec: float, hop_sec: float) -> np.ndarray:
-    w = int(round(win_sec * sr))
-    h = int(round(hop_sec * sr))
-    if w <= 0 or h <= 0 or len(x) < w:
-        return np.empty((0, w), dtype=np.float32)
-    starts = np.arange(0, len(x) - w + 1, h)
-    return np.stack([x[s:s+w] for s in starts]).astype(np.float32)
+def segment_audio_signal(
+    signal: np.ndarray,
+    sample_rate: int,
+    window_duration_sec: float,
+    step_duration_sec: float
+) -> np.ndarray:
+    """
+    Split an audio signal into overlapping segments (frames).
+
+    Args:
+        signal (np.ndarray): Input audio signal (1D array).
+        sample_rate (int): Sampling rate of the signal in Hz.
+        window_duration_sec (float): Duration of each window in seconds.
+        step_duration_sec (float): Time step (hop) between consecutive windows in seconds.
+
+    Returns:
+        np.ndarray: 2D array of shape (n_frames, frame_length_samples) containing segmented frames.
+    """
+    window_size = int(round(window_duration_sec * sample_rate)) # Window size in samples
+    step_size = int(round(step_duration_sec * sample_rate)) # Step size in samples
+
+    if window_size <= 0 or step_size <= 0 or len(signal) < window_size:
+        return np.empty((0, window_size), dtype=np.float32)
+
+    start_indices = np.arange(0, len(signal) - window_size + 1, step_size)
+    frames = np.stack([signal[start:start + window_size] for start in start_indices]).astype(np.float32)
+
+    return frames
 
 # ----------------------------
 # Augmentation 
@@ -215,7 +237,8 @@ def preprocess_file(path: str, folder_kind: str) -> Dict[str, np.ndarray]:
         x = zscore(x)  # einmal pro komplette Datei
 
     # Segmentierung
-    segs = segment_signal(x, cfg.target_sr, cfg.window_sec, cfg.hop_sec)
+    ic()
+    segs = segment_audio_signal(x, cfg.target_sr, cfg.window_sec, cfg.hop_sec)
     if segs.size == 0:
         return {"segs": segs}
 
@@ -260,7 +283,7 @@ def split_segments_by_ratio(segments: List[np.ndarray], pids: List[str]) -> Tupl
     train_pids = [pids[i] for i in train_idx]
     if len(set(train_pids)) < cfg.min_train_unique_patients:
         all_pids = list(set(pids))
-        missing = [p for p in all_pids if p not in set(train_pids)]
+        missing = set(all_pids) - set(train_pids)
         rng.shuffle(missing)
         for mp in missing:
             cand = [i for i in range(n) if pids[i] == mp]
@@ -436,5 +459,16 @@ def load_npz_for_training(npz_path: str):
 
 
 if __name__ == "__main__":
+    logfile = open("output/console.log", "w")
+    from icecream import ic
+    def dual_output(s):
+        print(s)                # Konsole
+        print(s, file=logfile)  # Datei
+    ic.configureOutput(prefix="DEBUG | ", includeContext=True, outputFunction=dual_output)
     # Varianten testen: cfg.normalization = "per_segment" | "per_file" | "none"
-    run()
+    # run()
+    
+    example_path = "Dataset/Spontanaktivität/BA0803901.wav"
+    results = preprocess_file(example_path, "Spontanaktivität")
+    ic(results)
+    

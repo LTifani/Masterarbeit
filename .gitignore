@@ -4,6 +4,10 @@
 *.pyc
 venv/
 *.npz
+*.pt
+artifacts/
+.*log
+output/
 
 
 

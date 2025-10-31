@@ -46,10 +46,13 @@ print(df_summary)
 
 # Beispielsignal visualisieren (Zeit & Frequenz)
 example_path = os.path.join(base_path, "Normal", os.listdir(os.path.join(base_path, "Normal"))[0])
+example_path = os.path.join(base_path, "Spontanaktivität", os.listdir(os.path.join(base_path, "Spontanaktivität"))[0])
 y, sr = librosa.load(example_path, sr=None)
 
 plt.figure(figsize=(12,4))
-plt.title("Beispielsignal (Normal) – Zeitbereich")
+# plt.title("Beispielsignal (Normal) - Zeitbereich")
+plt.title("Beispielsignal (Spontanaktivität) - Zeitbereich")
+
 plt.plot(np.linspace(0, len(y)/sr, len(y)), y)
 plt.xlabel("Zeit (s)")
 plt.ylabel("Amplitude")
