@@ -268,37 +268,67 @@ def collect_files(root: str) -> Dict[str, List[str]]:
 # Split-Logik (Segment-basiert)
 # ----------------------------
 
-def split_segments_by_ratio(segments: List[np.ndarray], pids: List[str]) -> Tuple[np.ndarray,np.ndarray,np.ndarray]:
-    """Random Split über Segmente, danach: Train enthält mind. K unterschiedliche PIDs (Overlap erlaubt)."""
-    n = len(segments)
-    idx = np.arange(n)
-    rng.shuffle(idx)
+def split_segments_by_ratio(
+    segments: List[np.ndarray],
+    patient_ids: List[str],
+    train_ratio: float,
+    val_ratio: float,
+    min_unique_train_patients: int,
+    rng: np.random.Generator
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Randomly split segment data into train, validation, and test sets.
+    Ensures that the training set contains at least a minimum number of unique patient IDs.
 
-    n_train = int(round(cfg.train_ratio * n))
-    n_val   = int(round(cfg.val_ratio * n))
-    train_idx = idx[:n_train]
-    val_idx   = idx[n_train:n_train+n_val]
-    test_idx  = idx[n_train+n_val:]
+    Args:
+        segments (List[np.ndarray]): List of segment arrays.
+        patient_ids (List[str]): List of patient IDs, one per segment.
+        train_ratio (float): Fraction of data for training.
+        val_ratio (float): Fraction of data for validation.
+        min_unique_train_patients (int): Minimum number of unique patients in training set.
+        rng (np.random.Generator): Random number generator for reproducibility.
 
-    train_pids = [pids[i] for i in train_idx]
-    if len(set(train_pids)) < cfg.min_train_unique_patients:
-        all_pids = list(set(pids))
-        missing = set(all_pids) - set(train_pids)
-        rng.shuffle(missing)
-        for mp in missing:
-            cand = [i for i in range(n) if pids[i] == mp]
-            if not cand: 
+    Returns:
+        Tuple[np.ndarray, np.ndarray, np.ndarray]: Arrays for (X_train, X_val, X_test).
+    """
+    n_segments = len(segments)
+    indices = np.arange(n_segments)
+    rng.shuffle(indices)
+
+    n_train = int(round(train_ratio * n_segments))
+    n_val = int(round(val_ratio * n_segments))
+
+    train_indices = indices[:n_train]
+    val_indices = indices[n_train:n_train + n_val]
+    test_indices = indices[n_train + n_val:]
+
+    # Ensure sufficient unique patient IDs in training
+    train_pids = np.array(patient_ids)[train_indices]
+    unique_train_pids = set(train_pids)
+
+    if len(unique_train_pids) < min_unique_train_patients:
+        all_unique_pids = set(patient_ids)
+        missing_pids = list(all_unique_pids - unique_train_pids)
+        rng.shuffle(missing_pids)
+
+        for pid in missing_pids:
+            candidate_indices = np.flatnonzero(np.array(patient_ids) == pid)
+            if len(candidate_indices) == 0:
                 continue
-            pick = rng.choice(cand)
-            if pick not in train_idx:
-                train_idx = np.append(train_idx, pick)
-                train_pids.append(mp)
-                if len(set(train_pids)) >= cfg.min_train_unique_patients:
+            selected_idx = rng.choice(candidate_indices)
+            if selected_idx not in train_indices:
+                train_indices = np.concatenate((train_indices, [selected_idx]))
+                unique_train_pids.add(pid)
+                if len(unique_train_pids) >= min_unique_train_patients:
                     break
 
-    X_train = np.stack([segments[i] for i in train_idx]) if len(train_idx) else np.empty((0, segments[0].shape[-1]))
-    X_val   = np.stack([segments[i] for i in val_idx])   if len(val_idx)   else np.empty((0, segments[0].shape[-1]))
-    X_test  = np.stack([segments[i] for i in test_idx])  if len(test_idx)  else np.empty((0, segments[0].shape[-1]))
+    def safe_stack(idxs: np.ndarray) -> np.ndarray:
+        return np.stack([segments[i] for i in idxs]) if len(idxs) else np.empty((0, *segments[0].shape))
+
+    X_train = safe_stack(train_indices)
+    X_val = safe_stack(val_indices)
+    X_test = safe_stack(test_indices)
+
     return X_train, X_val, X_test
 
 # ----------------------------
@@ -318,6 +348,8 @@ def run():
     def process_group(file_list: List[str], folder_kind: str, segs_acc: List[np.ndarray], pids_acc: List[str]):
         for fp in file_list:
             pid = patient_id_from_path(fp, folder_kind)
+            ic(fp, pid, folder_kind)
+            return
             out = preprocess_file(fp, folder_kind)
             S = out["segs"]
             if S.size == 0:
@@ -327,6 +359,7 @@ def run():
                 pids_acc.append(pid)
 
     process_group(files.get(cfg.normal_name, []), cfg.normal_name, segs_normal, pids_normal)
+    return
     process_group(files.get(cfg.abnormal_name, []), cfg.abnormal_name, segs_abn, pids_abn)
     process_group(files.get(cfg.mixed_name, []), cfg.mixed_name, segs_mixed, pids_mixed)
 
@@ -466,7 +499,7 @@ if __name__ == "__main__":
         print(s, file=logfile)  # Datei
     ic.configureOutput(prefix="DEBUG | ", includeContext=True, outputFunction=dual_output)
     # Varianten testen: cfg.normalization = "per_segment" | "per_file" | "none"
-    # run()
+    run()
     
     example_path = "Dataset/Spontanaktivität/BA0803901.wav"
     results = preprocess_file(example_path, "Spontanaktivität")

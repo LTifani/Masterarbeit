@@ -2,7 +2,7 @@
 *.pdf
 *.png
 *.pyc
-venv/
+.venv/
 *.npz
 *.pt
 artifacts/
