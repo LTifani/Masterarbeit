@@ -8,6 +8,7 @@
 artifacts/
 .*log
 output/
-
+archives/
+Dataset/
 
 
