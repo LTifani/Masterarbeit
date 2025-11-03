@@ -1,14 +1,12 @@
 from __future__ import annotations
-import os
-import json
-import csv
-import time
+
 import shutil
 import numpy as np
-from utils import *
-from models import TcnAutoencoder
+from utils import  *
+from models import Model
 from typing import Optional, Tuple, Dict
 from preprocess import load_npz_for_training
+from utils import Config, cfg, DEVICE, dict_to_str, ic, EarlyStopping, EpochLogger
 
 
 # =============================
@@ -23,7 +21,8 @@ from torch.utils.data import TensorDataset, DataLoader
 # =============================
 # SETTINGS
 # =============================
-NPZ_PATH = "preprocess_origin/emg_phase1_per_segment.npz"
+NPZ_PATH = "preprocess/emg_phase1_per_segment.npz"
+NPZ_PATH = "preprocess/emg_phase1_augment.npz"
 OUTPUT_DIR = "artifacts"
 ENABLE_OPTUNA = True  # Set to False to disable hyperparameter optimization
 
@@ -35,7 +34,7 @@ HYPERPARAMS = {
     "dropout": 0.2,
     "latent_dim": 8,
     "batch_size": 16,
-    "epochs": 15,
+    "epochs": 2,
     "learning_rate": 1e-3,
     "early_stopping": True,
     "patience": 8,
@@ -103,7 +102,7 @@ def find_best_threshold(errors: np.ndarray, labels: Optional[np.ndarray]) -> Tup
             best_f1, best_thr = f1, float(thr)
     return best_thr, best_f1
 
-@torch.no_grad()
+@torch.inference_mode()
 def predict_reconstruction(model: nn.Module, X: np.ndarray, batch_size: int = 128) -> np.ndarray:
     model.eval()
     X_t = torch.from_numpy(X).to(DEVICE)
@@ -136,7 +135,7 @@ def evaluate(X_pred: np.ndarray, X: np.ndarray, y: Optional[np.ndarray], thresho
 # 4) TRAIN (and optional HPO)
 # =============================
 
-@torch.no_grad()
+@torch.inference_mode()
 def validate_recon_mse_epoch(model: nn.Module, loader: DataLoader) -> float:
     """
     If optimizer is provided -> train epoch, else eval epoch.
@@ -183,22 +182,23 @@ def get_data(hp: Dict):
     X_train, X_val, y_val, X_test, y_test, meta = load_dataset_via_preprocessing(NPZ_PATH)
 
     seq_len, n_feat = X_train.shape[1], X_train.shape[2]
-    model = TcnAutoencoder(
-        seq_len=seq_len, n_feat=n_feat,
+    # Dataloaders
+    batch_size = int(hp["batch_size"])
+    train_loader = DataLoader(TensorDataset(torch.from_numpy(X_train)), batch_size=batch_size, shuffle=True)
+    val_loader   = DataLoader(TensorDataset(torch.from_numpy(X_val)),   batch_size=batch_size, shuffle=False)
+    model = Model(
+        seq_len, n_feat,train_loader, val_loader, 
         filters=hp["filters"], kernel_size=hp["kernel_size"],
         dilations=hp["dilations"], dropout=hp["dropout"],
         latent_dim=hp["latent_dim"],
     ).to(DEVICE)
     optimizer = torch.optim.Adam(model.parameters(), lr=hp["learning_rate"])
 
-    # Dataloaders
-    batch_size = int(hp["batch_size"])
-    train_loader = DataLoader(TensorDataset(torch.from_numpy(X_train)), batch_size=batch_size, shuffle=True)
-    val_loader   = DataLoader(TensorDataset(torch.from_numpy(X_val)),   batch_size=batch_size, shuffle=False)
     
     return model, optimizer, train_loader, val_loader, X_test, y_test, X_val, y_val
 
 def train_once(hp: dict, logger: Optional[EpochLogger]=None) -> float:
+    model : Model = None
     model, optimizer, train_loader, val_loader, X_test, y_test, _ , _ = get_data(hp)
 
     # Early stopping
@@ -206,6 +206,7 @@ def train_once(hp: dict, logger: Optional[EpochLogger]=None) -> float:
 
     # Train
     for epoch in range(1, int(hp["epochs"]) + 1):
+        train_loss = model.train_one_epoch()
         train_loss = train_recon_mse_epoch(model, train_loader, optimizer)
         val_loss   = validate_recon_mse_epoch(model, val_loader)
         if logger:
@@ -238,7 +239,7 @@ def objective(trial: "optuna.Trial"):
 
     hp = {}
     hp["filters"]       = trial.suggest_int("filters", 16, 32)
-    hp["kernel_size"]   = trial.suggest_int("kernel_size", 6, 10, log=True)
+    hp["kernel_size"]   = trial.suggest_int("kernel_size", 3, 10, log=True, step=2)
     hp["dropout"]       = trial.suggest_float("dropout", 0.0, 0.5)
     hp["latent_dim"]    = trial.suggest_int("latent_dim", 8, 32, log=True)
     hp["learning_rate"] = trial.suggest_float("learning_rate", 1e-4, 3e-3, log=True)
@@ -257,15 +258,16 @@ def main():
 
     shutil.rmtree(OUTPUT_DIR, ignore_errors=True)
     ic("Starting training...")
-    if ENABLE_OPTUNA:
+    if not ENABLE_OPTUNA:
         cfg.train_hyperparameter = HYPERPARAMS
         logger = EpochLogger(cfg)
         train_once(HYPERPARAMS, logger)
         # return
     
     # For Optuna we need dataset shapes for model creation inside objective
-    study = optuna.create_study(direction="maximize")
-    study.optimize(objective, n_trials=100, show_progress_bar=True)
+    # study = optuna.create_study(direction="maximize")
+    study = optuna.create_study(direction="minimize")
+    study.optimize(objective, n_trials=1, show_progress_bar=True)
     print("Best params:", study.best_trial.params, "value=", study.best_value)
     ic(study.best_trial.params)
 

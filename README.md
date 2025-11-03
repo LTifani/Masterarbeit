@@ -23,3 +23,8 @@
     scp kommegle@lkommegne.ai.tha.de:~/Masterarbeit/output/combined_output.txt .
     ```
 
+# Generate requirement file
+
+```shell
+    pip install pipreqs
+```

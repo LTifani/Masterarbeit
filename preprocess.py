@@ -8,18 +8,16 @@ Preprocessing script for Needle-EMG WAV files to LSTM/TCN-ready .npz format.
 - Normalization modes: 'per_segment' | 'per_file' | 'none'
 - Runs standalone: Adjust config below and execute.
 """
-
+import os
 import json
 import math
 import random
-from pathlib import Path
-from dataclasses import asdict
-from typing import Tuple, List, Dict, Any
-
 import numpy as np
-from icecream import ic
-from utils import *
+from pathlib import Path
 from scipy.io import wavfile
+from dataclasses import asdict
+from utils import ic, Config, cfg, timer
+from typing import Tuple, List, Dict, Any
 from scipy.signal import butter, filtfilt, iirnotch, resample_poly
 
 
@@ -87,8 +85,11 @@ def apply_bandpass_filter(
     if not (0 < low_norm < high_norm < 1):
         return signal
 
-    b, a = butter(order, [low_norm, high_norm], btype='band')
-    return filtfilt(b, a, signal)
+    results = butter(order, [low_norm, high_norm], btype='band')
+    if results is None:
+        return signal
+
+    return filtfilt(results[0], results[1], signal)
 
 
 def apply_notch_filter(
@@ -615,6 +616,8 @@ def load_npz_for_training(npz_path: str) -> Tuple[np.ndarray, Dict[str, Dict[str
         Tuple of (X_train, splits, meta).
         splits: Dict with 'val'/'test' keys containing normal/abnormal/mixed/abn_plus_mixed.
     """
+    if not os.path.exists(npz_path):
+        raise FileNotFoundError(f"NPZ file not found: {npz_path}")
     data = np.load(npz_path, allow_pickle=True)
     meta = json.loads(str(data["meta"].item()))
 

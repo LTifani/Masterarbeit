@@ -5,13 +5,14 @@ import csv
 import json
 import time
 import torch
+import logging
 import numpy as np
 from torch import nn
 from icecream import ic
 from pathlib import Path
 from functools import wraps
 from datetime import datetime
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, Tuple, Optional, Callable, Any
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -19,7 +20,8 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 LOG_FILE = "output/console.log"
 os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
-LOG_FILE = open(LOG_FILE, "w")
+logging.basicConfig(filename='output/console.log', filemode='w+', format="%(asctime)s - %(levelname)s - %(message)s", level=logging.DEBUG)
+# LOG_FILE = open(LOG_FILE, "w")
 
 def dict_to_str(d: Dict) -> str:
     return "\t".join([f"{k}={v}" for k, v in d.items()])
@@ -29,8 +31,9 @@ def join_path(*args) -> str:
     return os.path.join(*args)
 
 def dual_output(s):
-    print(s)                # Konsole
-    print(s, file=LOG_FILE)  # Datei
+    # print(s)                # Konsole
+    logging.info(s)
+
 ic.configureOutput("", includeContext=True, outputFunction=dual_output)
 
 def get_now_str() -> str:
@@ -46,11 +49,10 @@ class Config:
     train_output_dir: str = "artifacts/logs"
 
     # Segmentation
-    target_sample_rate: int = 11025
-    # window_duration_seconds: float = 1.0
-    # hop_duration_seconds: float = 1.0
-    window_duration_seconds: float = 0.01
-    hop_duration_seconds: float = 0.005
+    target_sample_rate: int = 11025 # Sample rate in Hz / s
+    window_duration_seconds: float = 0.01 # 10ms
+    hop_duration_seconds: float = 0.005 # 5ms
+
 
     # Normalization
     normalization_mode: str = "per_segment"  # 'per_segment' | 'per_file' | 'none'
@@ -97,14 +99,14 @@ class Config:
     # Training Hyperparameters
     create_time: str = get_now_str()
     positive_set: str = "abn_plus_mixed"  # ("abnormal", "mixed", "abn_plus_mixed")
-    train_hyperparameter : Dict = None  # Placeholder for hyperparameters used during training
+    train_hyperparameter : Dict =  field(default_factory=dict)  # Placeholder for hyperparameters used during training
     best_model_path: str = ""
     
     def get_training_dir(self) -> str:
         dict_helper = {
-            'ftr': self.train_hyperparameter['filters'],
-            'ep': self.train_hyperparameter['epochs'],
-            'bs': self.train_hyperparameter['batch_size']
+            'ftr': self.train_hyperparameter.get("filters", 0),
+            'ep': self.train_hyperparameter.get("epochs", 0),
+            'bs': self.train_hyperparameter.get("batch_size", 0)
         }
         training_dir = f"{self.create_time}__" + "_".join([f"{k}_{v}" for k, v in dict_helper.items()])
         training_dir = join_path(self.train_output_dir, training_dir)
@@ -115,11 +117,11 @@ class Config:
         config_path = join_path(self.get_training_dir(), "configuration.json")
         json.dump(vars(self), open(config_path, "w"), indent=4)
 
-
-
-
-
-
+    def __del__(self):
+        try:
+            self.save()
+        except Exception:
+            pass
 
 cfg = Config()
 
@@ -234,13 +236,6 @@ def build_val_test_from_splits(splits: Dict, positive: str) -> Tuple[np.ndarray,
 
     return ensure_3d(X_val), y_val, ensure_3d(X_test), y_test
 
-def ensure_3d(x: np.ndarray) -> np.ndarray:
-    if x.ndim == 1:
-        x = x.reshape(-1, 1, 1)
-    elif x.ndim == 2:
-        x = x[..., None]
-    return x.astype(np.float32)
-
 def timer(func: Callable) -> Callable:
     """Decorator to measure and print execution time of a function."""
     @wraps(func)
@@ -252,6 +247,11 @@ def timer(func: Callable) -> Callable:
         return result
     return wrapper
 
-
+def get_error_per_sample(target: torch.Tensor, prediction: torch.Tensor) -> torch.Tensor:
+    """Calculates MSE per sample, averaging over specified dimensions (e.g., time, features)."""
+    return (target - prediction).square().mean(dim=[1, 2])
 
 # __all__ = ["Config", "cfg", "EpochLogger", "EarlyStopping", "dict_to_str", "join_path", "ensure_3d", "build_val_test_from_splits", "timer"]
+
+if __name__ == "__main__":
+    f = Config()
