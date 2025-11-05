@@ -68,19 +68,14 @@ class Config:
 
     # Data Sources
     normal_folder: str = "Normal"
-    abnormal_folder: str = "Spontanaktivität"
+    abnormal_folder: str = "Spontanaktivitäten"
     mixed_folder: str = "Mixed"
-
-    # Mixed Usage
-    use_mixed_in_training: bool = False
-    include_mixed_in_test: bool = True
 
     # Splits (segment-based; patient overlap allowed)
     train_ratio: float = 0.7
     validation_ratio: float = 0.15
     test_ratio: float = 0.15
     random_seed: int = 42
-    min_unique_train_patients: int = 5
 
     # Augmentation (applied to training segments only)
     apply_augmentation: bool = True
@@ -98,7 +93,7 @@ class Config:
 
     # Training Hyperparameters
     create_time: str = get_now_str()
-    positive_set: str = "abn_plus_mixed"  # ("abnormal", "mixed", "abn_plus_mixed")
+    positive_set: str = "abnormal"  
     train_hyperparameter : Dict =  field(default_factory=dict)  # Placeholder for hyperparameters used during training
     best_model_path: str = ""
     

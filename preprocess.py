@@ -12,6 +12,7 @@ import os
 import json
 import math
 import random
+import glob
 import numpy as np
 from pathlib import Path
 from scipy.io import wavfile
@@ -132,37 +133,7 @@ def zscore_normalize(signal: np.ndarray, epsilon: float = 1e-8) -> np.ndarray:
         std = epsilon
     return (signal - mean) / std
 
-
-def extract_patient_id(file_path: str, folder_type: str) -> str:
-    """
-    Extract patient ID from filename based on folder type.
-
-    Args:
-        file_path: Path to file.
-        folder_type: Type of folder ('Normal', 'Spontanaktivität', or 'Mixed').
-
-    Returns:
-        Patient ID string.
-    """
-    filename = Path(file_path).stem
-    if folder_type in ("Normal", "Spontanaktivität"):
-        import re
-        match = re.match(r"^([A-Za-zÄÖÜäöü]+)", filename)
-        if match:
-            return match.group(1)
-        return filename[:1]
-
-    # For Mixed
-    import re
-    match = re.match(r"^([A-Za-zÄÖÜäöü]+)", filename)
-    if match:
-        return match.group(1)
-    parts = filename.split("_")
-    if len(parts) >= 3:
-        return parts[-2]
-    return parts[0]
-
-
+zscore_normalize
 def segment_audio_signal(
     signal: np.ndarray,
     sample_rate: int,
@@ -289,14 +260,13 @@ def apply_augmentations(segment: np.ndarray, sample_rate: int) -> np.ndarray:
 # =============================
 
 
-def preprocess_single_file(file_path: str, folder_type: str, config: Config=Config()) -> Dict[str, np.ndarray]:
+def preprocess_single_file(file_path: str, config: Config=Config()) -> Dict[str, np.ndarray]:
     """
     Preprocess a single WAV file: filter, normalize, segment.
 
     Args:
         file_path: Path to WAV file.
-        folder_type: Folder type for patient ID extraction.
-
+        
     Returns:
         Dict with 'segments' key containing (N, T) array.
     """
@@ -332,99 +302,21 @@ def preprocess_single_file(file_path: str, folder_type: str, config: Config=Conf
 
     return {"segments": segments}
 
-
-def collect_all_files(root_dir: str, config: Config=Config()) -> Dict[str, List[str]]:
-    """
-    Collect WAV files from subfolders.
-
-    Args:
-        root_dir: Root directory.
-
-    Returns:
-        Dict with keys for normal/abnormal/mixed and lists of file paths.
-    """
-    subfolders = [config.normal_folder, config.abnormal_folder, config.mixed_folder]
-    file_dict = {key: [] for key in subfolders}
-    root_path = Path(root_dir)
-
-    for subfolder in subfolders:
-        subdir_path = root_path / subfolder
-        if not subdir_path.exists():
-            continue
-        for file_path in subdir_path.rglob("*.wav"):
-            file_dict[subfolder].append(str(file_path))
-
-    return file_dict
-
-
 # =============================
 # Splitting
 # =============================
 
+def _collect_files(path: str) -> List[str]:
+    return sorted(glob.glob(os.path.join(path, "*.wav")))
 
-def split_segments_by_ratio(
-    segments: List[np.ndarray],
-    patient_ids: List[str],
-    train_ratio: float,
-    validation_ratio: float,
-    min_unique_train_patients: int,
-    rng: np.random.Generator
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Split segments into train/val/test ensuring min unique patients in train.
 
-    Args:
-        segments: List of segment arrays.
-        patient_ids: Corresponding patient IDs.
-        train_ratio: Train split ratio.
-        validation_ratio: Validation split ratio.
-        min_unique_train_patients: Min unique patients in train.
-        rng: Random generator for shuffling.
-
-    Returns:
-        Tuple of (X_train, X_val, X_test) as stacked arrays.
-    """
-    num_segments = len(segments)
-    indices = np.arange(num_segments)
-    rng.shuffle(indices)
-
-    num_train = int(round(train_ratio * num_segments))
-    num_validation = int(round(validation_ratio * num_segments))
-
-    train_indices = indices[:num_train]
-    val_indices = indices[num_train:num_train + num_validation]
-    test_indices = indices[num_train + num_validation:]
-
-    # Ensure min unique patients in train
-    train_patient_ids = np.array(patient_ids)[train_indices]
-    unique_train_patients = set(train_patient_ids)
-
-    if len(unique_train_patients) < min_unique_train_patients:
-        all_unique_patients = set(patient_ids)
-        missing_patients = list(all_unique_patients - unique_train_patients)
-        rng.shuffle(missing_patients)
-
-        for patient in missing_patients:
-            candidate_indices = np.flatnonzero(np.array(patient_ids) == patient)
-            if len(candidate_indices) == 0:
-                continue
-            selected_index = rng.choice(candidate_indices)
-            if selected_index not in train_indices:
-                train_indices = np.concatenate((train_indices, [selected_index]))
-                unique_train_patients.add(patient)
-                if len(unique_train_patients) >= min_unique_train_patients:
-                    break
-
-    def stack_segments(indices_array: np.ndarray) -> np.ndarray:
-        if len(indices_array) == 0:
-            return np.empty((0, *segments[0].shape), dtype=np.float32)
-        return np.stack([segments[i] for i in indices_array])
-
-    X_train = stack_segments(train_indices)
-    X_val = stack_segments(val_indices)
-    X_test = stack_segments(test_indices)
-
-    return X_train, X_val, X_test
+def _split_indices(n: int, ratios: Tuple[float, float, float], seed: int = 42):
+    train_ratio, validation_ratio, test_ratio = ratios
+    idx = np.arange(n)
+    np.random.default_rng(seed).shuffle(idx)
+    n_train = int(train_ratio * n)
+    n_val = int(validation_ratio * n)
+    return idx[:n_train], idx[n_train:n_train + n_val], idx[n_train + n_val:]
 
 
 # =============================
@@ -432,215 +324,73 @@ def split_segments_by_ratio(
 # =============================
 
 
-def process_file_group(
-    file_list: List[str],
-    folder_type: str,
-    segments_accumulator: List[np.ndarray],
-    patient_ids_accumulator: List[str]
-) -> None:
-    """
-    Process all files in a group, extract segments and patient IDs.
+def preprocess_dataset(cfg: Config) -> str:
+    np.random.seed(cfg.seed)
+    random.seed(cfg.seed)
 
-    Args:
-        file_list: List of file paths.
-        folder_type: Folder type.
-        segments_accumulator: List to append segments.
-        patient_ids_accumulator: List to append patient IDs.
-    """
-    for file_path in file_list:
-        patient_id = extract_patient_id(file_path, folder_type)
-        processed = preprocess_single_file(file_path, folder_type)
-        file_segments = processed["segments"]
-        
-        if file_segments.size == 0:
-            continue
-        
-        segments_accumulator.extend(list(file_segments.astype(np.float32)))
-        patient_ids_accumulator.extend([patient_id] * len(file_segments))
-        
+    normal_files = _collect_files(os.path.join(cfg.input_dir, cfg.normal_name))
+    abnorm_files = _collect_files(os.path.join(cfg.input_dir, cfg.abnormal_name))
+
+    normal_segments = [s for f in normal_files for s in [preprocess_single_file(f, cfg)] if s.size > 0]
+    abnormal_segments = [s for f in abnorm_files for s in [preprocess_single_file(f, cfg)] if s.size > 0]
+
+    X_normal = np.concatenate(normal_segments, axis=0)
+    X_abn = np.concatenate(abnormal_segments, axis=0) if abnormal_segments else np.empty((0, X_normal.shape[1]))
+
+    i_train, i_val, i_test = _split_indices(len(X_normal), (cfg.train_ratio, cfg.val_ratio, cfg.test_ratio), cfg.seed)
+    X_train, X_val_normal, X_test_normal = X_normal[i_train], X_normal[i_val], X_normal[i_test]
+
+    if len(X_abn):
+        half = len(X_abn) // 2
+        X_val_abn, X_test_abn = X_abn[:half], X_abn[half:]
+    else:
+        X_val_abn = np.empty((0, X_normal.shape[1]))
+        X_test_abn = np.empty((0, X_normal.shape[1]))
+
+    if cfg.augment:
+        augments = [zscore_normalize(apply_augmentations(s, cfg.target_sr, cfg)) for s in X_train for _ in range(cfg.aug_per_segment)]
+        X_train = np.concatenate([X_train, np.stack(augments)], axis=0)
+        np.random.default_rng(cfg.seed).shuffle(X_train)
+
+    meta = {
+        "config": asdict(cfg),
+        "n_train": len(X_train),
+        "n_val_normal": len(X_val_normal),
+        "n_val_abnormal": len(X_val_abn),
+        "n_test_normal": len(X_test_normal),
+        "n_test_abnormal": len(X_test_abn),
+    }
+
+    os.makedirs(cfg.output_dir, exist_ok=True)
+    out_path = cfg.output_file()
+    np.savez_compressed(out_path,
+        X_train=X_train, X_val_normal=X_val_normal, X_val_abnormal=X_val_abn,
+        X_test_normal=X_test_normal, X_test_abnormal=X_test_abn,
+        meta=np.array(json.dumps(meta), dtype=object))
+    print(f"Saved preprocessed data to {out_path}")
+    return out_path
+
 
 
 def ensure_3d_shape(data: np.ndarray) -> np.ndarray:
     """Ensure shape (N, T, 1) for channel dimension."""
     return data[..., None].astype(np.float32)
 
-@timer
-def run_preprocessing(config: Config = Config()) -> None:
-    """Execute the full preprocessing pipeline."""
-    random.seed(config.random_seed)
-    np.random.seed(config.random_seed)
 
-    all_files = collect_all_files(config.input_dir, config)
-
-    # Process each group
-    normal_segments, normal_patient_ids = [], []
-    abnormal_segments, abnormal_patient_ids = [], []
-    mixed_segments, mixed_patient_ids = [], []
-
-    process_file_group(
-        all_files.get(config.normal_folder, []),
-        config.normal_folder,
-        normal_segments,
-        normal_patient_ids
-    )
-    process_file_group(
-        all_files.get(config.abnormal_folder, []),
-        config.abnormal_folder,
-        abnormal_segments,
-        abnormal_patient_ids
-    )
-    process_file_group(
-        all_files.get(config.mixed_folder, []),
-        config.mixed_folder,
-        mixed_segments,
-        mixed_patient_ids
-    )
-
-
-    # Split each group
-    def split_group(segments_list: List[np.ndarray], patient_ids_list: List[str]) -> Tuple[np.ndarray, ...]:
-        if not segments_list:
-            empty_shape = (0, int(config.window_duration_seconds * config.target_sample_rate))
-            return (np.empty(empty_shape, dtype=np.float32),) * 3
-        return split_segments_by_ratio(
-            segments_list, patient_ids_list, config.train_ratio, config.validation_ratio,
-            config.min_unique_train_patients, rng
-        )
-
-    X_train_normal, X_val_normal, X_test_normal = split_group(normal_segments, normal_patient_ids)
-    X_train_abnormal, X_val_abnormal, X_test_abnormal = split_group(abnormal_segments, abnormal_patient_ids)
-    X_train_mixed, X_val_mixed, X_test_mixed = split_group(mixed_segments, mixed_patient_ids)
-
-    # Combine for training: normal + optional mixed
-    X_train = X_train_normal
-    if config.use_mixed_in_training and len(X_train_mixed):
-        X_train = np.concatenate([X_train, X_train_mixed], axis=0)
-
-    # Apply augmentation to training set
-    if config.apply_augmentation and len(X_train):
-        ic("Applying augmentation...")
-        augmented_segments = []
-        segment_length = X_train.shape[1]
-        for segment in X_train:
-            for _ in range(config.augmentations_per_segment):
-                augmented = apply_augmentations(segment, config.target_sample_rate)
-                if config.normalization_mode.lower() == "per_segment":
-                    augmented = zscore_normalize(augmented)
-                augmented_segments.append(augmented.reshape(1, segment_length))
-        if augmented_segments:
-            X_augmented = np.concatenate(augmented_segments, axis=0).astype(np.float32)
-            X_train = np.concatenate([X_train, X_augmented], axis=0)
-
-        # Shuffle training set
-        indices = np.arange(len(X_train))
-        rng.shuffle(indices)
-        X_train = X_train[indices]
-
-    # Prepare val/test sets
-    X_val_normal = X_val_normal
-    X_test_normal = X_test_normal
-    X_val_abnormal = X_val_abnormal
-    X_test_abnormal = X_test_abnormal
-
-    if config.include_mixed_in_test and (len(X_val_mixed) or len(X_test_mixed)):
-        X_val_mixed = X_val_mixed
-        X_test_mixed = X_test_mixed
-    else:
-        empty_shape = (0, X_train.shape[1])
-        X_val_mixed = np.empty(empty_shape, dtype=np.float32)
-        X_test_mixed = np.empty(empty_shape, dtype=np.float32)
-
-    # Merged abnormal + mixed for evaluation
-    X_val_abnormal_plus_mixed = (
-        X_val_abnormal if len(X_val_mixed) == 0
-        else np.concatenate([X_val_abnormal, X_val_mixed], axis=0)
-    )
-    X_test_abnormal_plus_mixed = (
-        X_test_abnormal if len(X_test_mixed) == 0
-        else np.concatenate([X_test_abnormal, X_test_mixed], axis=0)
-    )
-
-    # Ensure 3D shape (N, T, 1)
-    X_train = ensure_3d_shape(X_train)
-    X_val_normal = ensure_3d_shape(X_val_normal)
-    X_test_normal = ensure_3d_shape(X_test_normal)
-    X_val_abnormal = ensure_3d_shape(X_val_abnormal)
-    X_test_abnormal = ensure_3d_shape(X_test_abnormal)
-    X_val_mixed = ensure_3d_shape(X_val_mixed)
-    X_test_mixed = ensure_3d_shape(X_test_mixed)
-    X_val_abnormal_plus_mixed = ensure_3d_shape(X_val_abnormal_plus_mixed)
-    X_test_abnormal_plus_mixed = ensure_3d_shape(X_test_abnormal_plus_mixed)
-
-    # Metadata
-    metadata = {
-        "config": asdict(config),
-        "counts": {
-            "train": int(len(X_train)),
-            "val_normal": int(len(X_val_normal)),
-            "val_abnormal": int(len(X_val_abnormal)),
-            "val_mixed": int(len(X_val_mixed)),
-            "test_normal": int(len(X_test_normal)),
-            "test_abnormal": int(len(X_test_abnormal)),
-            "test_mixed": int(len(X_test_mixed)),
-        },
-        "normalization": config.normalization_mode,
-    }
-
-    # Save compressed NPZ
-    output_path = Path(config.output_dir) / f"{config.output_name}.npz"
-    output_path.parent.mkdir(exist_ok=True)
-    np.savez_compressed(
-        output_path,
-        X_train=X_train,
-        X_val_normal=X_val_normal,
-        X_val_abnormal=X_val_abnormal,
-        X_val_mixed=X_val_mixed,
-        X_test_normal=X_test_normal,
-        X_test_abnormal=X_test_abnormal,
-        X_test_mixed=X_test_mixed,
-        X_val_abn_plus_mixed=X_val_abnormal_plus_mixed,
-        X_test_abn_plus_mixed=X_test_abnormal_plus_mixed,
-        meta=np.array(json.dumps(metadata), dtype=object),
-    )
-    ic(f"Saved: {output_path}")
-
-
-def load_npz_for_training(npz_path: str) -> Tuple[np.ndarray, Dict[str, Dict[str, np.ndarray]], Dict[str, Any]]:
-    """
-    Load preprocessed NPZ for training.
-
-    Args:
-        npz_path: Path to .npz file.
-
-    Returns:
-        Tuple of (X_train, splits, meta).
-        splits: Dict with 'val'/'test' keys containing normal/abnormal/mixed/abn_plus_mixed.
-    """
-    if not os.path.exists(npz_path):
-        raise FileNotFoundError(f"NPZ file not found: {npz_path}")
+def load_npz_for_training(npz_path: str):
     data = np.load(npz_path, allow_pickle=True)
-    meta = json.loads(str(data["meta"].item()))
-
+    X_train = data["X_train"]
     splits = {
-        "val": {
-            "normal": data["X_val_normal"],
-            "abnormal": data["X_val_abnormal"],
-            "mixed": data["X_val_mixed"],
-            "abn_plus_mixed": data["X_val_abn_plus_mixed"],
-        },
-        "test": {
-            "normal": data["X_test_normal"],
-            "abnormal": data["X_test_abnormal"],
-            "mixed": data["X_test_mixed"],
-            "abn_plus_mixed": data["X_test_abn_plus_mixed"],
-        }
+        "val": {"normal": data["X_val_normal"], "abnormal": data["X_val_abnormal"]},
+        "test": {"normal": data["X_test_normal"], "abnormal": data["X_test_abnormal"]}
     }
-    return data["X_train"], splits, meta
+    meta = json.loads(str(data["meta"].item()))
+    return X_train, splits, meta
 
 
 if __name__ == "__main__":
     pass
-    run_preprocessing()
+
     
     # normal_segments, normal_patient_ids = [], []
     # all_files = collect_all_files(cfg.input_dir)
