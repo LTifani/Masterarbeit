@@ -239,8 +239,8 @@ def label_segments_analytic(
 # Main script execution
 # ---------------------------------------------------------
 if __name__ == "__main__":
-    CSV_FILEPATH = "./Dataset/second_labeling/filtered_BA0803901_segment_1_PSW_FB_labels.csv"
-    AUDIO_DURATION_SECONDS = 20.0
+    CSV_FILEPATH = "./Dataset/Labels/filtered_RN181281_segment_3.csv"
+    AUDIO_DURATION_SECONDS = 10.338866
     SEGMENT_DURATION_SECONDS = 0.01
     SEGMENT_OVERLAP_PERCENTAGE = 0.5
     MIN_ANOMALY_OVERLAP_PERCENTAGE = 20.0
@@ -280,7 +280,7 @@ if __name__ == "__main__":
         df["End_sample"] = (df["End"] * target_sample_rate).astype(int)
         df["Label"] = segment_labels
 
-        df.to_csv("output/segment_labels_output.csv", index=False)
+        df.to_csv("Dataset/Label_Spontanaktivität/filtered_RN181281_segment_3.csv", index=False)
 
         ic(df.head(20))
 
