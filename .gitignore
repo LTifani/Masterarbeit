@@ -10,5 +10,7 @@ artifacts/
 output/
 archives/
 Dataset/
-
+TT/
+archive/
+experiments/
 
