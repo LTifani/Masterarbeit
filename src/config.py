@@ -20,21 +20,35 @@ class DataConfig:
     
     # Data paths
     normal_data_dirs: List[str] = field(default_factory=lambda: ["./Dataset/Normal"])
-    anomaly_data_dirs: List[str] = field(default_factory=lambda: ["./TT/Spontanaktivitäten"])
-    anomaly_csv_dir: str = "./TT/Label_Spontanaktivität"
+    anomaly_data_dirs: List[str] = field(default_factory=lambda: ["./Dataset/Spontanaktivitäten"])
+    anomaly_csv_dir: str = "./Dataset/Label_Spontanaktivität"
     
     # Segmentation parameters
     window_ms: float = 10.0
     hop_percentage: float = 0.5
     min_overlap_threshold: float = 0.2
     
-    # Data split ratios
+    # Normal Data split ratios
     train_ratio: float = 0.7
     val_ratio: float = 0.15
     test_ratio: float = 0.15
     
+    # Abnormal Data split ratios
+    a_train_ratio: float = 0.0
+    a_val_ratio: float = 0.5
+    a_test_ratio: float = 0.5
+    
     # Preprocessing
     apply_normalization: bool = True
+    
+    # Filtering
+    apply_bandpass_filter: bool = True
+    bandpass_low: float = 20.0
+    bandpass_high: float = 4500.0
+    filter_order: int = 4
+    apply_notch_filter: bool = True
+    notch_frequency: float = 50.0
+    notch_quality: float = 30.0
     
     def __post_init__(self):
         """Validate configuration after initialization."""
@@ -134,9 +148,9 @@ class TrainingConfig:
     loss_function: str = "mse"  # "mse", "mae", "huber"
     
     # Hardware
-    device: str = "cuda"  # "cuda", "cpu", "mps"
-    num_workers: int = 0  # IMPORTANT: Keep at 0 to avoid multiprocessing issues
-    pin_memory: bool = False  # IMPORTANT: Keep False to avoid CUDA memory issues
+    device: str = "cuda" 
+    num_workers: int = 0  
+    pin_memory: bool = False  
     
     def __post_init__(self):
         """Validate training configuration."""
@@ -299,3 +313,9 @@ def create_config_from_optuna_params(params: Dict[str, Any],
         config.training.learning_rate = params['learning_rate']
     
     return config
+
+if __name__ == '__main__':
+    data_config = DataConfig()
+    print(asdict(data_config))
+    print()
+    print(vars(data_config))

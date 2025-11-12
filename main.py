@@ -48,7 +48,7 @@ def parse_args():
                        help='Name of the experiment')
     parser.add_argument('--epochs', type=int, default=None,
                        help='Number of training epochs (overrides config)')
-    parser.add_argument('--batch-size', type=int, default=1500,
+    parser.add_argument('--batch-size', type=int, default=None,
                        help='Batch size (overrides config)')
     parser.add_argument('--lr', type=float, default=None,
                        help='Learning rate (overrides config)')
