@@ -154,7 +154,7 @@ class TCNAutoencoder(nn.Module):
         
         # Latent bottleneck
         self.to_latent = nn.Sequential(
-            nn.AdaptiveAvgPool1d(1),
+            nn.AdaptiveAvgPool1d(1),  #anscheinend wird durch diese einzige wert pro Filter alle meine zeitliche struktur wie 
             nn.Flatten(),
             nn.Linear(num_filters, latent_dim),
             nn.ReLU(),

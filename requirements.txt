@@ -7,3 +7,4 @@ matplotlib==3.10.7
 optuna==4.5.0
 pandas==2.3.3
 scipy==1.16.3
+mlflow

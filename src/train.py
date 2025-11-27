@@ -14,6 +14,7 @@ from torch.utils.data import DataLoader
 from sklearn.metrics import roc_auc_score, precision_recall_curve, auc
 import numpy as np
 import logging
+import mlflow
 
 logger = logging.getLogger(__name__)
 
@@ -346,6 +347,11 @@ class Trainer:
             }
             self.metrics_logger.log(metrics)
             
+            # --- MLFLOW: Epoch-Metriken loggen ---
+            mlflow.log_metric("train_loss", train_loss, step=epoch)
+            mlflow.log_metric("val_loss", val_loss, step=epoch)
+            mlflow.log_metric("learning_rate", current_lr, step=epoch)
+            
             logger.info(
                 f"Epoch {epoch+1}/{self.config.training.num_epochs} - "
                 f"Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}, LR: {current_lr:.2e}"
@@ -369,7 +375,10 @@ class Trainer:
                     metrics={'val_loss': val_loss, 'train_loss': train_loss}
                 )
                 logger.info(f"Best model saved (val_loss: {val_loss:.6f})")
-            
+
+                # --- MLFLOW: Bestes Modell als Artefakt loggen ---
+                mlflow.log_artifact(best_model_path, artifact_path="model_checkpoints")
+                
             # Check early stopping
             if self.early_stopping(val_loss):
                 logger.info(f"Early stopping triggered at epoch {epoch+1}")
@@ -382,6 +391,8 @@ class Trainer:
             epoch=self.current_epoch,
             optimizer_state=self.optimizer.state_dict()
         )
+        # --- MLFLOW: Finales Modell als Artefakt loggen ---
+        mlflow.log_artifact(final_model_path, artifact_path="model_checkpoints")
         
         # Evaluate on test set if provided
         test_metrics = {}

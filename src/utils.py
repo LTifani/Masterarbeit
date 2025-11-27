@@ -7,7 +7,7 @@ Common helper functions used across the project.
 import os
 import numpy as np
 import pandas as pd
-from typing import List, Tuple
+from typing import Dict, Any, List, Tuple
 import logging
 
 logger = logging.getLogger(__name__)
@@ -193,3 +193,17 @@ def setup_logging(log_dir: str = "output",
     )
     
     return logging.getLogger(__name__)
+
+# --- UTILITY-FUNKTION ZUM GLÄTTEN DES CONFIG DICT ---
+def _flatten_config_dict(d: Dict[str, Any], parent_key: str = '', sep: str = '.') -> Dict[str, Any]:
+    """Glättet ein verschachteltes Konfigurations-Dictionary für MLflow."""
+    items = []
+    for k, v in d.items():
+        new_key = parent_key + sep + k if parent_key else k
+        if isinstance(v, Dict):
+            items.extend(_flatten_config_dict(v, new_key, sep=sep).items())
+        elif isinstance(v, list) or isinstance(v, tuple):
+            items.append((new_key, str(v))) # Listen/Tupel als String loggen
+        else:
+            items.append((new_key, v))
+    return dict(items)

@@ -9,11 +9,12 @@ import sys
 import argparse
 import torch
 import logging
-
+import mlflow
 from src.config import ExperimentConfig, create_default_config
 from src.datasets import create_data_loaders
 from src.train import train_model
 from src.utils import setup_logging
+from src.utils import _flatten_config_dict
 
 
 def setup_environment():
@@ -129,6 +130,24 @@ def main():
     logger.info(f"Kernel Size: {config.model.kernel_size}")
     logger.info(f"Dilations: {config.model.dilations}")
     
+    mlflow.set_experiment(config.experiment_name)
+    
+    # Starte den MLflow Run mit dem Verzeichnisnamen als Run Name
+    with mlflow.start_run(run_name=os.path.basename(config.experiment_dir)) as run:
+        logger.info(f"MLflow Run ID: {run.info.run_id}")
+        
+        # Logge alle Parameter aus der Konfiguration
+        flat_params = _flatten_config_dict(config.to_dict())
+        mlflow.log_params(flat_params)
+        
+        # Logge die gespeicherte Konfigurationsdatei als Artefakt
+        mlflow.log_artifact(os.path.join(config.experiment_dir, "config.json"), artifact_path="config")
+        
+        # Setze Tags für bessere Organisation
+        mlflow.set_tag("training_script", "main.py")
+        mlflow.set_tag("device", config.training.device)
+      
+        
     try:
         # Create data loaders
         logger.info("="*80)
@@ -155,8 +174,10 @@ def main():
         
     except Exception as e:
         logger.error(f"Training failed with error: {e}", exc_info=True)
+        mlflow.set_tag("status", "FAILED")
         sys.exit(1)
 
 
 if __name__ == "__main__":
+    setup_environment()
     main()

@@ -9,6 +9,7 @@ import argparse
 import logging
 import torch
 import optuna
+import mlflow
 from optuna.trial import Trial
 from typing import Optional
 
@@ -20,10 +21,10 @@ from src.config import (
 from src.datasets import create_data_loaders
 from src.train import train_model
 from src.utils import setup_logging
-
+from src.utils import _flatten_config_dict
 
 logger = logging.getLogger(__name__)
-
+mlflow.set_tracking_uri("http://127.0.0.1:5000/")
 
 def objective(trial: Trial, 
               base_config: ExperimentConfig,
@@ -42,19 +43,23 @@ def objective(trial: Trial,
     # Suggest hyperparameters
     params = {
         'filters': trial.suggest_categorical('filters', [32, 64, 128, 256]),
-        'kernel_size': trial.suggest_categorical('kernel_size', [3, 5, 7, 9]),
-        'num_dilation_layers': trial.suggest_int('num_dilation_layers', 2, 6),
+        'kernel_size': trial.suggest_categorical('kernel_size', [5, 7, 9, 11]),
+        'num_dilation_layers': trial.suggest_int('num_dilation_layers', 4, 6),
         'dropout': trial.suggest_float('dropout', 0.1, 0.5),
         'latent_dim': trial.suggest_categorical('latent_dim', [64, 128, 256, 512]),
-        'batch_size': trial.suggest_categorical('batch_size', [16, 32, 64, 128]),
-        'learning_rate': trial.suggest_float('learning_rate', 1e-5, 1e-2, log=True)
+        'batch_size': trial.suggest_categorical('batch_size', [32, 64, 128, 256]),
+        'learning_rate': trial.suggest_float('learning_rate', 1e-6, 1e-3, log=True)
     }
     
     # Create config with suggested parameters
     config = create_config_from_optuna_params(params, base_config)
     config.experiment_name = f"optuna_trial_{trial.number}"
     config.training.device = str(device)
-    config.training.num_epochs = 30  # Reduced for faster trials
+    config.training.num_epochs = 50 
+    
+    # Logge Trial-Hyperparameter
+    flat_params = _flatten_config_dict(config.to_dict())
+    mlflow.log_params(flat_params)
     
     try:
         # Create data loaders
@@ -144,15 +149,37 @@ def train_with_best_params(study: optuna.Study,
     config.experiment_name = "final_optimized_model"
     config.training.num_epochs = 100  # Full training
     
-    # Save config
-    config.save()
+    # --- MLFLOW INTEGRATION ---
     
-    # Create data loaders
-    train_loader, val_loader, test_loader = create_data_loaders(config)
+    mlflow.set_experiment(config.experiment_name) 
+
+    # Starte den MLflow Run. Wir nutzen eine eindeutige Run-Bezeichnung basierend auf dem besten Trial
+    run_name = f"Final_Run_from_Trial_{study.best_trial.number}"
     
-    # Train model
-    model, results = train_model(config, train_loader, val_loader, test_loader)
-    
+    with mlflow.start_run(run_name=run_name) as run:
+        # Save config
+        config.save()
+        
+        # Logge alle Konfigurationsparameter
+        flat_params = _flatten_config_dict(config.to_dict())
+        mlflow.log_params(flat_params)
+        
+        # Logge die gespeicherte Konfigurationsdatei als Artefakt
+        config_path = os.path.join(config.experiment_dir, "config.json")
+        mlflow.log_artifact(config_path, artifact_path="config")
+        
+        # Logge Tags zur Nachverfolgung
+        mlflow.set_tag("source_best_trial_id", str(study.best_trial.number))
+        mlflow.set_tag("training_type", "Final_Model")
+        
+        # Create data loaders
+        train_loader, val_loader, test_loader = create_data_loaders(config)
+        
+        # Train model
+        model, results = train_model(config, train_loader, val_loader, test_loader)
+        
+        mlflow.set_tag("status", "COMPLETED")
+        
     logger.info("="*80)
     logger.info("FINAL MODEL RESULTS")
     logger.info("="*80)
