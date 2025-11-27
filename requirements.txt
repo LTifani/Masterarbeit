@@ -1,0 +1,9 @@
+# Use PyTorch CUDA 12.8 wheels
+--extra-index-url https://download.pytorch.org/whl/cu128
+torch
+icecream==2.1.7
+librosa==0.11.0
+matplotlib==3.10.7
+optuna==4.5.0
+pandas==2.3.3
+scipy==1.16.3

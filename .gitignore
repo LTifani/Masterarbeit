@@ -1,0 +1,16 @@
+*.wav
+*.pdf
+*.png
+*.pyc
+.venv/
+*.npz
+*.pt
+artifacts/
+.*log
+output/
+archives/
+Dataset/
+TT/
+archive/
+experiments/
+
